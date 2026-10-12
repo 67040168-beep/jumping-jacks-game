@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jumping Jack Challenge - 2 Player</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <!-- Load Pose Detection API -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Inter:wght@400;700;900&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: white;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+
+        .font-game {
+            font-family: 'Black Ops One', cursive;
+        }
+
+        #video-container {
+            position: relative;
+            width: 100%;
+            height: calc(100vh - 120px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #1e293b;
+            border-radius: 1rem;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            border: 4px solid #334155;
+        }
+
+        video, canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror effect */
+        }
+
+        .player-zone {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 50%;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 20px;
+        }
+
+        #player1-zone { left: 0; border-right: 2px dashed rgba(255, 255, 255, 0.3); }
+        #player2-zone { right: 0; }
+
+        .score-display {
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            padding: 10px 30px;
+            border-radius: 9999px;
+            font-size: 4rem;
+            font-weight: 900;
+            text-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            transition: transform 0.1s ease;
+        }
+
+        .score-bump {
+            transform: scale(1.3);
+            color: #fbbf24; /* Amber */
+        }
+
+        #timer {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            font-size: 3rem;
+            background: rgba(220, 38, 38, 0.8); /* Red */
+            padding: 10px 30px;
+            border-radius: 15px;
+            font-family: 'Black Ops One', cursive;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            border: 3px solid #fca5a5;
+        }
+
+        /* Overlays */
+        .overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.9);
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .hidden { display: none !important; }
+
+        .btn {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+            font-weight: bold;
+            font-size: 1.5rem;
+            padding: 1rem 3rem;
+            border-radius: 9999px;
+            box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.5);
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+            outline: none;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 20px 25px -5px rgba(59, 130, 246, 0.4);
+        }
+        
+        .btn:active {
+            transform: translateY(2px);
+        }
+
+        #loading-indicator {
+            border: 4px solid rgba(255,255,255,0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .skeleton-pose {
+            position: absolute;
+            bottom: 20px;
+            opacity: 0.5;
+            width: 100px;
+        }
+
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col p-4 box-border">
+
+    <header class="flex justify-between items-center mb-4 h-16">
+        <h1 class="text-3xl font-game text-yellow-400 tracking-wider">JUMPING JACK CLASH</h1>
+        <div class="text-sm text-gray-400">Stand side-by-side. Ensure full body is visible.</div>
+    </header>
+
+    <main class="relative flex-grow flex justify-center items-center">
+        
+        <div id="video-container">
+            <!-- Video and Canvas for Pose Detection -->
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="canvas"></canvas>
+            
+            <!-- Player 1 Zone (Left) -->
+            <div id="player1-zone" class="player-zone">
+                <div class="text-xl font-bold text-blue-400 mb-2 font-game uppercase">Player 1</div>
+                <div id="score1" class="score-display font-game text-blue-100">0</div>
+                <div id="p1-status" class="mt-4 text-sm font-bold bg-gray-800 px-3 py-1 rounded-full text-gray-300">Ready</div>
+            </div>
+
+            <!-- Player 2 Zone (Right) -->
+            <div id="player2-zone" class="player-zone">
+                <div class="text-xl font-bold text-red-400 mb-2 font-game uppercase">Player 2</div>
+                <div id="score2" class="score-display font-game text-red-100">0</div>
+                <div id="p2-status" class="mt-4 text-sm font-bold bg-gray-800 px-3 py-1 rounded-full text-gray-300">Ready</div>
+            </div>
+
+            <!-- Global Timer -->
+            <div id="timer" class="hidden">60</div>
+        </div>
+
+        <!-- Start Screen Overlay -->
+        <div id="start-screen" class="overlay">
+            <h1 class="text-6xl font-game text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500 mb-4">60s JUMPING JACK<br>CHALLENGE</h1>
+            <p class="text-xl mb-8 max-w-2xl text-gray-300">
+                1. Allow webcam access.<br>
+                2. Step back so both players are fully visible (head to toe).<br>
+                3. Player 1 on the left, Player 2 on the right.<br>
+                4. Do as many jumping jacks as you can in 60 seconds!
+            </p>
+            
+            <div id="loading-area" class="flex flex-col items-center mb-6">
+                <div id="loading-indicator"></div>
+                <p id="loading-text" class="mt-4 text-blue-400 animate-pulse">Loading AI Models...</p>
+            </div>
+
+            <button id="start-btn" class="btn hidden">START GAME</button>
+        </div>
+
+        <!-- Countdown Overlay -->
+        <div id="countdown-screen" class="overlay hidden">
+            <h2 class="text-4xl font-game text-yellow-400 mb-2">GET READY</h2>
+            <div id="countdown-number" class="text-9xl font-game text-white">3</div>
+            <p class="mt-8 text-xl text-gray-400">Step back into frame...</p>
+        </div>
+
+        <!-- Result Screen Overlay -->
+        <div id="result-screen" class="overlay hidden">
+            <h2 class="text-5xl font-game text-white mb-6">TIME'S UP!</h2>
+            
+            <div class="flex gap-12 mb-10">
+                <div class="flex flex-col items-center bg-gray-800 p-8 rounded-2xl border-4 border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
+                    <span class="text-2xl font-game text-blue-400 mb-2">Player 1</span>
+                    <span id="final-score1" class="text-6xl font-black text-white">0</span>
+                </div>
+                
+                <div class="flex flex-col items-center bg-gray-800 p-8 rounded-2xl border-4 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]">
+                    <span class="text-2xl font-game text-red-400 mb-2">Player 2</span>
+                    <span id="final-score2" class="text-6xl font-black text-white">0</span>
+                </div>
+            </div>
+
+            <h3 id="winner-text" class="text-6xl font-game text-yellow-400 mb-10 animate-bounce"></h3>
+            
+            <button id="restart-btn" class="btn">PLAY AGAIN</button>
+        </div>
+
+    </main>
+
+    <script>
+        // --- DOM Elements ---
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        const ui = {
+            startScreen: document.getElementById('start-screen'),
+            countdownScreen: document.getElementById('countdown-screen'),
+            resultScreen: document.getElementById('result-screen'),
+            loadingArea: document.getElementById('loading-area'),
+            startBtn: document.getElementById('start-btn'),
+            restartBtn: document.getElementById('restart-btn'),
+            timerDisplay: document.getElementById('timer'),
+            countdownNum: document.getElementById('countdown-number'),
+            score1: document.getElementById('score1'),
+            score2: document.getElementById('score2'),
+            status1: document.getElementById('p1-status'),
+            status2: document.getElementById('p2-status'),
+            finalScore1: document.getElementById('final-score1'),
+            finalScore2: document.getElementById('final-score2'),
+            winnerText: document.getElementById('winner-text')
+        };
+
+        // --- Game State ---
+        let detector;
+        let isGameRunning = false;
+        let timerInterval;
+        let timeLeft = 60;
+        let animationId;
+
+        // Player states
+        const players = {
+            1: { score: 0, state: 'down', lastY: 0, confidence: 0, element: ui.score1, statusEl: ui.status1 },
+            2: { score: 0, state: 'down', lastY: 0, confidence: 0, element: ui.score2, statusEl: ui.status2 }
+        };
+
+        // Pose Thresholds
+        const MIN_SCORE = 0.3; // Minimum confidence score for a keypoint
+        
+        async function setupCamera() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert("Browser API navigator.mediaDevices.getUserMedia not available");
+                return false;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+                video.srcObject = stream;
+                
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        // Setup canvas dimensions to match video
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        resolve(true);
+                    };
+                });
+            } catch (e) {
+                console.error("Error accessing webcam:", e);
+                alert("Error accessing webcam. Please ensure permissions are granted.");
+                return false;
+            }
+        }
+
+        async function loadModel() {
+            // We use MoveNet Lightning for speed, configured to detect multiple poses (MultiPose)
+            const detectorConfig = {
+                modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+                enableTracking: true,
+                trackerType: poseDetection.TrackerType.BoundingBox
+            };
+            detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, detectorConfig);
+            console.log("Model loaded");
+        }
+
+        async function init() {
+            await tf.ready();
+            const camReady = await setupCamera();
+            if (camReady) {
+                await loadModel();
+                // Hide loading, show start button
+                ui.loadingArea.classList.add('hidden');
+                ui.startBtn.classList.remove('hidden');
+                
+                // Start background detection just to warm up and draw skeleton on start screen if desired
+                requestAnimationFrame(detectPose);
+            }
+        }
+
+        function checkJumpingJack(pose, playerNum) {
+            if (!isGameRunning) return;
+
+            const keypoints = pose.keypoints;
+            
+            // Helper to get keypoint by name safely
+            const getKp = (name) => {
+                const kp = keypoints.find(k => k.name === name);
+                return (kp && kp.score > MIN_SCORE) ? kp : null;
+            };
+
+            const leftWrist = getKp('left_wrist');
+            const rightWrist = getKp('right_wrist');
+            const leftShoulder = getKp('left_shoulder');
+            const rightShoulder = getKp('right_shoulder');
+            const leftAnkle = getKp('left_ankle');
+            const rightAnkle = getKp('right_ankle');
+            const leftHip = getKp('left_hip');
+            const rightHip = getKp('right_hip');
+
+            const p = players[playerNum];
+
+            // If we can't see shoulders and wrists, or hips and ankles, we can't judge accurately
+            if (!leftShoulder || !rightShoulder || !leftWrist || !rightWrist || !leftAnkle || !rightAnkle || !leftHip || !rightHip) {
+                p.statusEl.textContent = "Body Not Fully Visible";
+                p.statusEl.className = "mt-4 text-sm font-bold bg-red-900/80 px-3 py-1 rounded-full text-white";
+                return;
+            }
+
+            p.statusEl.textContent = "Tracking...";
+            p.statusEl.className = "mt-4 text-sm font-bold bg-green-800/80 px-3 py-1 rounded-full text-white";
+
+            // Logic:
+            // Hands UP: both wrists are above the shoulders (y coordinate is smaller)
+            const handsUp = (leftWrist.y < leftShoulder.y) && (rightWrist.y < rightShoulder.y);
+            
+            // Hands DOWN: both wrists are below shoulders, roughly near hips
+            const handsDown = (leftWrist.y > leftShoulder.y) && (rightWrist.y > rightShoulder.y);
+
+            // Legs WIDE: distance between ankles is significantly wider than shoulder width
+            const shoulderWidth = Math.abs(leftShoulder.x - rightShoulder.x);
+            const ankleDistance = Math.abs(leftAnkle.x - rightAnkle.x);
+            // Threshold for wide legs (adjust multiplier as needed based on testing, 1.5x shoulder width is a good start)
+            const legsWide = ankleDistance > (shoulderWidth * 1.5);
+            
+            // Legs TOGETHER: distance between ankles is roughly shoulder width or less
+            const legsTogether = ankleDistance < (shoulderWidth * 1.2);
+
+            // State Machine
+            if (p.state === 'down') {
+                // To go 'up', hands must be up AND legs must be wide
+                if (handsUp && legsWide) {
+                    p.state = 'up';
+                    // Optional: play a subtle sound or flash color
+                }
+            } else if (p.state === 'up') {
+                // To complete a rep and go 'down', hands must be down AND legs together
+                if (handsDown && legsTogether) {
+                    p.state = 'down';
+                    p.score++;
+                    updateScoreUI(playerNum);
+                }
+            }
+        }
+
+        function updateScoreUI(playerNum) {
+            const p = players[playerNum];
+            p.element.textContent = p.score;
+            
+            // Bump animation
+            p.element.classList.add('score-bump');
+            setTimeout(() => {
+                p.element.classList.remove('score-bump');
+            }, 200);
+        }
+
+        async function detectPose() {
+            if (video.readyState < 2) {
+                animationId = requestAnimationFrame(detectPose);
+                return;
+            }
+
+            const poses = await detector.estimatePoses(video, {
+                maxPoses: 2, // We want max 2 people
+                flipHorizontal: false // We flip the canvas via CSS
+            });
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Sort poses by X coordinate to determine Player 1 (Left) and Player 2 (Right)
+            // Remember canvas is mirrored via CSS, so x=0 in video is right side of screen.
+            // However, pose coordinates are based on the raw video.
+            // Raw video: x=0 is left of camera's perspective. 
+            // When mirrored on screen, x=0 raw appears on the right side of the screen.
+            // Let's draw and assign based on raw video coordinates.
+            // Raw X < half width = Left in real life, appears Right on screen (Player 2)
+            // Raw X > half width = Right in real life, appears Left on screen (Player 1)
+            
+            let p1Pose = null;
+            let p2Pose = null;
+            const midPoint = video.videoWidth / 2;
+
+            poses.forEach(pose => {
+                // Find center of pose (using hips)
+                const leftHip = pose.keypoints.find(k => k.name === 'left_hip');
+                const rightHip = pose.keypoints.find(k => k.name === 'right_hip');
+                
+                if (leftHip && rightHip) {
+                    const centerX = (leftHip.x + rightHip.x) / 2;
+                    // Because video is mirrored via CSS:
+                    // Raw X > midPoint means person is on the right side of the camera's view, 
+                    // which shows up on the LEFT side of the mirrored screen (Player 1 Zone)
+                    if (centerX > midPoint) {
+                        if (!p1Pose || pose.score > p1Pose.score) p1Pose = pose; 
+                    } else {
+                        // Shows up on RIGHT side of mirrored screen (Player 2 Zone)
+                        if (!p2Pose || pose.score > p2Pose.score) p2Pose = pose;
+                    }
+                }
+                
+                drawSkeleton(pose.keypoints);
+            });
+
+            if (isGameRunning) {
+                if (p1Pose) checkJumpingJack(p1Pose, 1);
+                else {
+                    players[1].statusEl.textContent = "Player Not Found";
+                    players[1].statusEl.className = "mt-4 text-sm font-bold bg-red-900/80 px-3 py-1 rounded-full text-white";
+                }
+
+                if (p2Pose) checkJumpingJack(p2Pose, 2);
+                else {
+                    players[2].statusEl.textContent = "Player Not Found";
+                    players[2].statusEl.className = "mt-4 text-sm font-bold bg-red-900/80 px-3 py-1 rounded-full text-white";
+                }
+            }
+
+            animationId = requestAnimationFrame(detectPose);
+        }
+
+        // Connections for drawing stick figure
+        const CONNECTIONS = [
+            ['nose', 'left_eye'], ['left_eye', 'left_ear'], ['nose', 'right_eye'], ['right_eye', 'right_ear'],
+            ['left_shoulder', 'right_shoulder'], ['left_shoulder', 'left_elbow'], ['left_elbow', 'left_wrist'],
+            ['right_shoulder', 'right_elbow'], ['right_elbow', 'right_wrist'], ['left_shoulder', 'left_hip'],
+            ['right_shoulder', 'right_hip'], ['left_hip', 'right_hip'], ['left_hip', 'left_knee'],
+            ['left_knee', 'left_ankle'], ['right_hip', 'right_knee'], ['right_knee', 'right_ankle']
+        ];
+
+        function drawSkeleton(keypoints) {
+            // Draw points
+            ctx.fillStyle = '#10b981'; // Emerald green
+            keypoints.forEach(kp => {
+                if (kp.score > MIN_SCORE) {
+                    ctx.beginPath();
+                    ctx.arc(kp.x, kp.y, 6, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            });
+
+            // Draw lines
+            ctx.strokeStyle = '#34d399';
+            ctx.lineWidth = 3;
+            CONNECTIONS.forEach(([kp1Name, kp2Name]) => {
+                const kp1 = keypoints.find(k => k.name === kp1Name);
+                const kp2 = keypoints.find(k => k.name === kp2Name);
+
+                if (kp1 && kp2 && kp1.score > MIN_SCORE && kp2.score > MIN_SCORE) {
+                    ctx.beginPath();
+                    ctx.moveTo(kp1.x, kp1.y);
+                    ctx.lineTo(kp2.x, kp2.y);
+                    ctx.stroke();
+                }
+            });
+        }
+
+        function startGameFlow() {
+            ui.startScreen.classList.add('hidden');
+            ui.resultScreen.classList.add('hidden');
+            ui.countdownScreen.classList.remove('hidden');
+            
+            // Reset scores
+            players[1].score = 0;
+            players[2].score = 0;
+            players[1].state = 'down';
+            players[2].state = 'down';
+            updateScoreUI(1);
+            updateScoreUI(2);
+
+            let count = 3;
+            ui.countdownNum.textContent = count;
+            
+            const countInterval = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    ui.countdownNum.textContent = count;
+                    ui.countdownNum.classList.remove('animate-ping');
+                    void ui.countdownNum.offsetWidth; // trigger reflow
+                    ui.countdownNum.classList.add('animate-ping');
+                } else if (count === 0) {
+                    ui.countdownNum.textContent = "GO!";
+                } else {
+                    clearInterval(countInterval);
+                    ui.countdownScreen.classList.add('hidden');
+                    startTimer();
+                }
+            }, 1000);
+        }
+
+        function startTimer() {
+            isGameRunning = true;
+            timeLeft = 60;
+            ui.timerDisplay.textContent = timeLeft;
+            ui.timerDisplay.classList.remove('hidden');
+
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                ui.timerDisplay.textContent = timeLeft;
+                
+                if(timeLeft <= 10) {
+                    ui.timerDisplay.classList.add('text-yellow-300', 'animate-pulse');
+                }
+
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function endGame() {
+            clearInterval(timerInterval);
+            isGameRunning = false;
+            ui.timerDisplay.classList.add('hidden');
+            ui.timerDisplay.classList.remove('text-yellow-300', 'animate-pulse');
+
+            ui.finalScore1.textContent = players[1].score;
+            ui.finalScore2.textContent = players[2].score;
+
+            if (players[1].score > players[2].score) {
+                ui.winnerText.textContent = "PLAYER 1 WINS!";
+                ui.winnerText.className = "text-6xl font-game text-blue-400 mb-10 animate-bounce";
+            } else if (players[2].score > players[1].score) {
+                ui.winnerText.textContent = "PLAYER 2 WINS!";
+                ui.winnerText.className = "text-6xl font-game text-red-400 mb-10 animate-bounce";
+            } else {
+                ui.winnerText.textContent = "IT'S A TIE!";
+                ui.winnerText.className = "text-6xl font-game text-yellow-400 mb-10 animate-pulse";
+            }
+
+            ui.resultScreen.classList.remove('hidden');
+        }
+
+        ui.startBtn.addEventListener('click', startGameFlow);
+        ui.restartBtn.addEventListener('click', startGameFlow);
+
+        // Start initialization on load
+        window.addEventListener('load', init);
+
+    </script>
+</body>
+</html>
